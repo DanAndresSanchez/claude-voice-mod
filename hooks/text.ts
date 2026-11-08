@@ -63,10 +63,15 @@ export function findWord(markdown: string, word: string, from: number): number {
 // The markdown with the word at (or just after) `near` wrapped in `open` and
 // `close`: `**` bold, `***` bold italic, a backtick a code box, a link colour.
 export function highlight(markdown: string, word: string, near: number, open = '**', close = open): string {
+  const span = wordSpan(markdown, word, near)
+  if (!span) return markdown
+  return `${markdown.slice(0, span[0])}${open}${markdown.slice(span[0], span[1])}${close}${markdown.slice(span[1])}`
+}
+
+// [start, end) of the word at (or just after) `near`; null if not within reach.
+export function wordSpan(markdown: string, word: string, near: number): [number, number] | null {
   const at = findWord(markdown, word, Math.max(0, near - 2))
-  if (at === -1) return markdown
-  const core = coreOf(word)
-  return `${markdown.slice(0, at)}${open}${core}${close}${markdown.slice(at + core.length)}`
+  return at === -1 ? null : [at, at + coreOf(word).length]
 }
 
 // The novelty voices macOS ships (Bells, Zarvox...): not worth listing.

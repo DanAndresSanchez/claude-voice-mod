@@ -120,3 +120,24 @@ test('the bar captions the sentence being said, its word marked', async ($, on) 
     await ui.unmount()
   }
 })
+
+test('the terminal puts a background on the spoken word, desktop keeps markdown', async ($, on) => {
+  on('state.get', { key: 'word' }, () => ({ value: { value: { at: 6, word: 'there.' }, version: 1 } }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>{e.component === 'AssistantMessage' ? e.props.text : ''}</Text>
+  })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({
+      plugin: 'read-aloud',
+      component: 'AssistantMessage',
+      requestId: 'm1',
+      surface,
+      props: { text: 'Hello there.', isFirstOfReply: true },
+    })
+    const lit = await ui.find({ type: 'Text', text: /^there$/ })
+    if (surface === 'terminal') expect(lit?.props.backgroundColor).toBe('claude')
+    else expect(lit).toBeUndefined()
+    await ui.unmount()
+  }
+})
