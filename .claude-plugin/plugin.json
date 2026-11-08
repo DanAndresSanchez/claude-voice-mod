@@ -1,0 +1,25 @@
+{
+  "name": "read-aloud",
+  "version": "0.1.0",
+  "description": "Reads Claude's replies aloud as they stream, in your Mac's own voice, highlighting each word in the chat as it is spoken.",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "backend": {
+      "type": "string",
+      "title": "Voice engine",
+      "description": "system: your Mac's voice (Spoken Content, Siri voices too) with exact word timing. command: your own local TTS (Piper, Kokoro...), word timing estimated.",
+      "options": [
+        "system",
+        "command"
+      ],
+      "default": "system"
+    },
+    "command": {
+      "type": "string",
+      "title": "TTS command",
+      "description": "For the command engine: a shell command that reads text on stdin and writes a WAV file to $OUT.",
+      "default": ""
+    }
+  }
+}
