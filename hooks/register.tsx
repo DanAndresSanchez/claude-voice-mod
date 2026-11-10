@@ -2,7 +2,7 @@ import { atom, memberOf, read, update } from 'claude-code'
 import type { Register, RenderChildren } from 'claude-code'
 
 import type { Prefs } from '../types'
-import { chunk, coreOf, findWord, highlight, parseVoices } from './text'
+import { chunk, coreOf, findWord, highlight, parseVoices, wordSpan } from './text'
 
 // One member per message (keyed by its requestId), so a word change redraws
 // only the reply being read.
@@ -460,6 +460,27 @@ export const register: Register = (on, options) => {
     const n = await read($, memberOf(word, e))
     if (n === null) return next(e)
     const lead = e.props.text.length - e.props.text.trimStart().length
+    // The terminal draws markdown links uncoloured and has no markdown
+    // background, so there the word gets a real one; the block shows as plain
+    // text while it is read.
+    if (e.surface === 'terminal') {
+      const span = wordSpan(e.props.text, n.word, n.at + lead)
+      if (!span) return next(e)
+      const { Box, Text } = $.ui.resolve(e)
+      const t = e.props.text
+      return (
+        <Box flexDirection="row" columnGap={1}>
+          {e.props.isFirstOfReply ? <Text>●</Text> : null}
+          <Text>
+            {t.slice(0, span[0])}
+            <Text backgroundColor="claude" color="inverseText">
+              {t.slice(span[0], span[1])}
+            </Text>
+            {t.slice(span[1])}
+          </Text>
+        </Box>
+      )
+    }
     const [open, close] = MARKS[(await read($, prefsAtom)).style] ?? MARKS.color
 
     return next({ ...e, props: { ...e.props, text: highlight(e.props.text, n.word, n.at + lead, open, close) } })
