@@ -146,3 +146,28 @@ test('the terminal puts a background on the spoken word, desktop keeps markdown'
     await ui.unmount()
   }
 })
+
+const layouts = [
+  { name: 'focused', pane: 'local_me', onScreen: true, says: 'is in focus' },
+  { name: 'split view, the other pane focused', pane: 'local_other', onScreen: true, says: 'is not in focus' },
+  { name: 'in a pop-out window', pane: 'local_other', onScreen: true, popout: true, says: 'is in focus' },
+  { name: 'not on screen', pane: 'local_other', onScreen: false, says: 'is not in focus' },
+]
+for (const l of layouts) {
+  test(`in the desktop app only the focused session speaks: ${l.name}`, async ($, on) => {
+    const text = JSON.stringify({
+      main_window: {
+        panes: l.popout
+          ? [{ session_id: 'local_other', focused: true }]
+          : [
+              { session_id: 'local_me', focused: l.pane === 'local_me' },
+              { session_id: 'local_other', focused: l.pane === 'local_other' },
+            ],
+      },
+      this_session: { session_id: 'local_me', on_screen: l.onScreen },
+    })
+    on('mcp.call', () => ({ value: { content: [{ type: 'text', text }], isError: false } }))
+    const out = await $.command.run({ command: 'read-aloud', args: 'where' })
+    expect(out.text).toContain(l.says)
+  })
+}
