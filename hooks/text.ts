@@ -58,19 +58,90 @@ function split(line: string): string[] {
 // word's letters alone.
 export const coreOf = (word: string) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
 
+// Parts of a block's markdown that are never spoken: code fences, link and
+// image targets, bare URLs. A word is never looked for in them.
+function unspoken(markdown: string): [number, number][] {
+  const out: [number, number][] = []
+  let fence: number | undefined
+  let pos = 0
+  for (const line of markdown.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      if (fence === undefined) fence = pos
+      else {
+        out.push([fence, pos + line.length])
+        fence = undefined
+      }
+    }
+    pos += line.length + 1
+  }
+  if (fence !== undefined) out.push([fence, markdown.length])
+  for (const m of markdown.matchAll(/\]\([^)]*\)|https?:\/\/\S+/g)) out.push([m.index, m.index + m[0].length])
+  return out
+}
+
+const isWordChar = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}]/u.test(c)
+
+// The first whole word `word` at or after `from`, outside what is never
+// spoken ("a" is not the "a" in "data"); -1 if none within reach.
 export function findWord(markdown: string, word: string, from: number): number {
   const core = coreOf(word)
   if (!core) return -1
-  const at = markdown.indexOf(core, from)
-  return at !== -1 && at - from < 400 ? at : -1
+  const dead = unspoken(markdown)
+  for (let at = markdown.indexOf(core, from); at !== -1 && at - from < 400; at = markdown.indexOf(core, at + 1)) {
+    if (isWordChar(markdown[at - 1]) || isWordChar(markdown[at + core.length])) continue
+    if (dead.some(([start, end]) => at >= start && at < end)) continue
+    return at
+  }
+  return -1
+}
+
+// The inline code span around `pos`: where it starts and ends (delimiters included) and its delimiter.
+function codeAround(markdown: string, pos: number): { from: number; to: number; tick: string } | null {
+  let open: { at: number; len: number } | undefined
+  for (const m of markdown.matchAll(/`+/g)) {
+    const len = m[0].length
+    if (len >= 3) open = undefined // a fence
+    else if (!open) open = { at: m.index, len }
+    else if (open.len === len) {
+      if (pos > open.at && pos < m.index) return { from: open.at, to: m.index + len, tick: m[0] }
+      open = undefined
+    }
+  }
+  return null
 }
 
 // The markdown with the word at (or just after) `near` wrapped in `open` and
 // `close`: `**` bold, `***` bold italic, a backtick a code box, a link colour.
+// Where the word already sits in code, a link or the same emphasis, the marks
+// give way to ones that nest, so the surrounding formatting survives.
 export function highlight(markdown: string, word: string, near: number, open = '**', close = open): string {
   const span = wordSpan(markdown, word, near)
   if (!span) return markdown
-  return `${markdown.slice(0, span[0])}${open}${markdown.slice(span[0], span[1])}${close}${markdown.slice(span[1])}`
+  const [a, b] = span
+  const line = markdown.slice(markdown.lastIndexOf('\n', a) + 1, a).replace(/`[^`]*`/g, '')
+  const lone = line.replace(/\*\*/g, '')
+  const inBold = (line.match(/\*\*/g)?.length ?? 0) % 2 === 1
+  const inItalic = (lone.match(/\*/g)?.length ?? 0) % 2 === 1
+  const opened = line.lastIndexOf('[')
+  const inLink = opened !== -1 && !line.slice(opened).includes(']') && markdown.indexOf('](', b) !== -1
+  const code = codeAround(markdown, a)
+  if (code && open === '`') return markdown // already boxed
+  if (inLink && open.includes('[')) {
+    open = open.replace('[', '') || '**' // a link inside a link will not do
+    close = close.replace(/\]\([^)]*\)/, '') || '**'
+  }
+  if (inBold && open.startsWith('**')) {
+    open = open.slice(2) || '*'
+    close = close.slice(0, -2) || '*'
+  }
+  if (inItalic && open === '*') [open, close] = ['**', '**']
+  if (!code) return `${markdown.slice(0, a)}${open}${markdown.slice(a, b)}${close}${markdown.slice(b)}`
+  // In code: split the span around the word, which keeps its own backticks inside the marks.
+  const { from, to, tick } = code
+  const before = markdown.slice(from + tick.length, a)
+  const after = markdown.slice(b, to - tick.length)
+  const marked = `${before ? tick + before + tick : ''}${open}${tick}${markdown.slice(a, b)}${tick}${close}${after ? tick + after + tick : ''}`
+  return markdown.slice(0, from) + marked + markdown.slice(to)
 }
 
 // [start, end) of the word at (or just after) `near`; null if not within reach.

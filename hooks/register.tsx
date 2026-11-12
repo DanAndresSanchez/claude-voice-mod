@@ -68,9 +68,12 @@ type Line = { text: string; block: string }
 // is in focus, so only that one talks. Elsewhere (a terminal) nothing says, so a
 // file names the session the person touched last (typed in, sent a prompt,
 // pressed a button) and only that one talks.
-const seat = { file: '', id: '', at: 0, focused: undefined as boolean | undefined }
+// `force` is set by an explicit Read again / Try it: that reply is spoken whatever
+// the focus check says, until it is said.
+const seat = { file: '', id: '', at: 0, focused: undefined as boolean | undefined, why: '', force: false }
 
-async function claim($: Engine) {
+async function claim($: Engine, explicit = false) {
+  if (explicit) seat.force = true
   if (!seat.id) return
   const owner = await $.fs.read(seat.file).catch(() => '')
   if (owner !== seat.id) await $.fs.write(seat.file, seat.id).catch(() => {})
@@ -87,7 +90,9 @@ async function inFocus($: Engine): Promise<boolean | undefined> {
   if (Date.now() - seat.at < 1000) return seat.focused
   seat.at = Date.now()
   try {
-    const r = await $.mcp.call('ccd_window', 'get_window_layout', {})
+    // A call the app does not answer must not hold the speaker up.
+    const r = await Promise.race([$.mcp.call('ccd_window', 'get_window_layout', {}), $.clock.sleep(1500).then(() => undefined, () => new Promise<undefined>(() => {}))])
+    if (!r) throw new Error('no answer from the app')
     const block = r.content.find(b => b.type === 'text')
     const layout = JSON.parse(block && 'text' in block ? block.text : '') as Layout
     const me = layout.this_session
@@ -95,13 +100,16 @@ async function inFocus($: Engine): Promise<boolean | undefined> {
     const focus = panes.find(pane => pane.focused)
     // On screen, and of the split-view panes the focused one (a pop-out window has no pane).
     seat.focused = !!me?.on_screen && (!panes.some(pane => pane.session_id === me.session_id) || focus?.session_id === me.session_id)
-  } catch {
+    seat.why = `on screen: ${me?.on_screen}, in a pane: ${panes.some(pane => pane.session_id === me?.session_id)}, focused pane: ${focus?.session_id === me?.session_id}`
+  } catch (err) {
     seat.focused = undefined
+    seat.why = err instanceof Error ? err.message : String(err)
   }
   return seat.focused
 }
 
 async function isOwner($: Engine) {
+  if (seat.force) return true
   const focused = await inFocus($)
   if (focused !== undefined) return focused
   // No owner yet, or no way to tell, counts as ours.
@@ -149,6 +157,7 @@ export const register: Register = (on, options) => {
   }
 
   function halt() {
+    seat.force = false
     generation += 1
     queue = []
     void current?.return?.() // leaving the stream kills the speaker
@@ -169,6 +178,7 @@ export const register: Register = (on, options) => {
   // Say the latest reply again from its start.
   function replay() {
     halt()
+    seat.force = true // asked for: spoken whatever the focus check says
     isStopped = false
     for (const l of reply) cursors.set(l.block, 0)
     say([...reply])
@@ -288,7 +298,10 @@ export const register: Register = (on, options) => {
             await update($, memberOf(word, { requestId: lit }), () => null)
             lit = undefined
           }
-          if (queue.length === 0) await update($, player, p => ({ ...p, isSpeaking: false, caption: null }))
+          if (queue.length === 0) {
+            seat.force = false
+            await update($, player, p => ({ ...p, isSpeaking: false, caption: null }))
+          }
         } catch (err) {
           $.ui.toast(`read-aloud: ${err instanceof Error ? err.message : String(err)}`)
           queue = []
@@ -305,11 +318,11 @@ export const register: Register = (on, options) => {
     if (arg === 'off' || arg === 'stop') stop()
     if (arg === 'on' || arg === 'off') await update($, isOn, () => arg === 'on')
     if (arg === 'again') {
-      await claim($)
+      await claim($, true)
       replay()
     }
     if (arg === 'demo') {
-      await claim($)
+      await claim($, true)
       say([{ text: DEMO, block: '' }])
     }
 
@@ -322,7 +335,7 @@ export const register: Register = (on, options) => {
           : focused
             ? 'This session is in focus, so it speaks.'
             : 'This session is not in focus, so it stays quiet.'
-      return { text: `read-aloud: ${how}` }
+      return { text: `read-aloud: ${how}${seat.why ? ` (${seat.why})` : ''}` }
     }
 
     return { text: `read-aloud is ${(await read($, isOn)) ? 'on' : 'off'}.` }
@@ -341,7 +354,7 @@ export const register: Register = (on, options) => {
       await update($, prefsAtom, () => prefs)
       await $.store.set('prefs', prefs)
       if (isHeard) {
-        await claim($)
+        await claim($, true)
         say([{ text: DEMO, block: '' }])
       }
     }
@@ -369,7 +382,7 @@ export const register: Register = (on, options) => {
             key="demo"
             label="Try it"
             onPress={async () => {
-              await claim($)
+              await claim($, true)
               say([{ text: DEMO, block: '' }])
             }}
           />
@@ -422,7 +435,7 @@ export const register: Register = (on, options) => {
         key="again"
         label="Read again"
         onPress={async () => {
-          await claim($)
+          await claim($, true)
           replay()
         }}
       />
