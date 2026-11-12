@@ -18,6 +18,11 @@ test('streamed markdown becomes sentences, code skipped', async () => {
   expect(chunk(r.rest + 'Last step', r.inFence, true).sentences).toEqual(['Last step'])
 })
 
+test('emoji are not spoken', async () => {
+  expect(chunk('Done 🎉! All green ✅ and 👍🏽 shipped 🇺🇸.\n', false).sentences).toEqual(['Done!', 'All green and shipped.'])
+  expect(chunk('🎉\n', false).sentences).toEqual([])
+})
+
 test('the spoken word is bolded in place, the right occurrence', async () => {
   const md = 'The cat and the dog, Dan.'
   expect(highlight(md, 'the', 12)).toBe('The cat and **the** dog, Dan.')

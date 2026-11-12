@@ -54,7 +54,11 @@ reading too.
 | `/read-aloud stop` | stop the current reply |
 | `/read-aloud off` / `on` | mute / unmute |
 
-Code blocks, URLs and markdown symbols are skipped. Subagents are not read.
+Code blocks, URLs, markdown symbols and emoji are skipped. Subagents are not read.
+
+With several sessions open, only the one you touched last (typed in, sent a
+prompt, pressed a control) talks; the others stay quiet. Click into a session
+or type a character to hand the voice to it.
 
 ## Picking a voice
 
