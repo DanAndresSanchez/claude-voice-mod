@@ -53,12 +53,15 @@ reading too.
 | `/read-aloud demo` | speak a test sentence |
 | `/read-aloud stop` | stop the current reply |
 | `/read-aloud off` / `on` | mute / unmute |
+| `/read-aloud where` | is this session the one that speaks |
 
 Code blocks, URLs, markdown symbols and emoji are skipped. Subagents are not read.
 
-With several sessions open, only the one you touched last (typed in, sent a
-prompt, pressed a control) talks; the others stay quiet. Click into a session
-or type a character to hand the voice to it.
+With several sessions open, only one talks. In the desktop app that is the
+session you are looking at (the focused pane); elsewhere, such as a terminal,
+the one you touched last (typed in, sent a prompt, pressed a control). The
+others stay quiet. `/read-aloud where` says which rule applies and whether the
+session speaks.
 
 ## Picking a voice
 

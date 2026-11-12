@@ -64,10 +64,11 @@ echo "$bin"`,
 // One sentence to say, and the reply block it came from.
 type Line = { text: string; block: string }
 
-// Sessions share one speaker: a file names the session the person touched last
-// (typed in, sent a prompt, pressed a button), and only that one talks. ponytail:
-// switching to a session without touching it keeps the old owner speaking.
-const seat = { file: '', id: '' }
+// Sessions share one speaker. In the desktop app the host knows which session
+// is in focus, so only that one talks. Elsewhere (a terminal) nothing says, so a
+// file names the session the person touched last (typed in, sent a prompt,
+// pressed a button) and only that one talks.
+const seat = { file: '', id: '', at: 0, focused: undefined as boolean | undefined }
 
 async function claim($: Engine) {
   if (!seat.id) return
@@ -75,8 +76,35 @@ async function claim($: Engine) {
   if (owner !== seat.id) await $.fs.write(seat.file, seat.id).catch(() => {})
 }
 
-// No owner yet, or no way to tell, counts as ours.
+// Whether the desktop app has this session in focus; undefined where it cannot
+// tell (a terminal, or the host's window tool is missing). Asked at most once a
+// second: it is checked at every spoken word.
+type Layout = {
+  main_window?: { panes?: { session_id: string; focused: boolean }[] }
+  this_session?: { session_id: string; on_screen: boolean }
+}
+async function inFocus($: Engine): Promise<boolean | undefined> {
+  if (Date.now() - seat.at < 1000) return seat.focused
+  seat.at = Date.now()
+  try {
+    const r = await $.mcp.call('ccd_window', 'get_window_layout', {})
+    const block = r.content.find(b => b.type === 'text')
+    const layout = JSON.parse(block && 'text' in block ? block.text : '') as Layout
+    const me = layout.this_session
+    const panes = layout.main_window?.panes ?? []
+    const focus = panes.find(pane => pane.focused)
+    // On screen, and of the split-view panes the focused one (a pop-out window has no pane).
+    seat.focused = !!me?.on_screen && (!panes.some(pane => pane.session_id === me.session_id) || focus?.session_id === me.session_id)
+  } catch {
+    seat.focused = undefined
+  }
+  return seat.focused
+}
+
 async function isOwner($: Engine) {
+  const focused = await inFocus($)
+  if (focused !== undefined) return focused
+  // No owner yet, or no way to tell, counts as ours.
   const owner = await $.fs.read(seat.file).catch(() => '')
   return owner === '' || owner === seat.id
 }
@@ -149,8 +177,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'read-aloud',
-      description: 'Read replies aloud: voice, speed and highlight, or on | off | stop | again | demo',
-      argumentHint: '[on|off|stop|again|demo]',
+      description: 'Read replies aloud: voice, speed and highlight, or on | off | stop | again | demo | where',
+      argumentHint: '[on|off|stop|again|demo|where]',
     })
     seat.id = await $.session.id()
     seat.file = `${(await $.env.get('HOME')) ?? ''}/Library/Caches/read-aloud/owner`
@@ -283,6 +311,18 @@ export const register: Register = (on, options) => {
     if (arg === 'demo') {
       await claim($)
       say([{ text: DEMO, block: '' }])
+    }
+
+    if (arg === 'where') {
+      seat.at = 0
+      const focused = await inFocus($)
+      const how =
+        focused === undefined
+          ? 'The app cannot tell which session is in focus, so the session you touched last speaks.'
+          : focused
+            ? 'This session is in focus, so it speaks.'
+            : 'This session is not in focus, so it stays quiet.'
+      return { text: `read-aloud: ${how}` }
     }
 
     return { text: `read-aloud is ${(await read($, isOn)) ? 'on' : 'off'}.` }
