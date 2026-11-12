@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { chunk, highlight, parseVoices } from './text'
+import { chunk, findWord, highlight, parseVoices } from './text'
 
 test('streamed markdown becomes sentences, code skipped', async () => {
   let r = chunk('Hello **Dan**. This is', false)
@@ -30,6 +30,23 @@ test('the spoken word is bolded in place, the right occurrence', async () => {
   expect(highlight(md, 'zebra', 0)).toBe(md)
   expect(highlight(md, 'dog,', 16, '`')).toBe('The cat and the `dog`, Dan.')
   expect(highlight(md, 'cat', 0, '[', '](x)')).toBe('The [cat](x) and the dog, Dan.')
+})
+
+test('a spoken word is a whole word, found only where it is spoken', async () => {
+  expect(findWord('The data is a table', 'a', 0)).toBe(12)
+  const fenced = '```\nfoo\n```\nfoo bar'
+  expect(findWord(fenced, 'foo', 0)).toBe(fenced.lastIndexOf('foo'))
+  const url = '[x](https://link.dev) link'
+  expect(findWord(url, 'link', 0)).toBe(url.lastIndexOf('link'))
+})
+
+test('the mark nests in code, links and emphasis instead of breaking them', async () => {
+  expect(highlight('Run `npm i` now', 'npm', 5, '[', '](x)')).toBe('Run [`npm`](x)` i` now')
+  expect(highlight('Use `x` here', 'x', 5, '**')).toBe('Use **`x`** here')
+  expect(highlight('Use `x` here', 'x', 5, '`')).toBe('Use `x` here')
+  expect(highlight('See [docs](http://x.dev) now', 'docs', 5, '[', '](L)')).toBe('See [**docs**](http://x.dev) now')
+  expect(highlight('A **big** deal', 'big', 4, '**')).toBe('A ***big*** deal')
+  expect(highlight('A **big** deal', 'big', 4, '**[', '](L)**')).toBe('A **[big](L)** deal')
 })
 
 test('the bar above the prompt offers Read again once a reply was heard', async ($, on) => {
