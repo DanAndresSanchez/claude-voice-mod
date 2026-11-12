@@ -2,6 +2,9 @@
 
 export type Chunked = { sentences: string[]; rest: string; inFence: boolean }
 
+// Pictographs, flags, skin tones, joiners, variation selectors and keycap marks.
+const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{200D}\u{20E3}]/gu
+
 // Plain words from one line of markdown; '' for lines not worth saying.
 export function speakable(line: string): string {
   return line
@@ -12,7 +15,9 @@ export function speakable(line: string): string {
     .replace(/\*+|~~/g, '') // emphasis
     .replace(/\|/g, ' ') // table cells
     .replace(/^\s*-{3,}\s*$/, '')
+    .replace(EMOJI, '') // `say` would read each one out by name
     .replace(/\s+/g, ' ')
+    .replace(/ ([.!?,;:])/g, '$1') // a dropped emoji leaves a gap before punctuation
     .trim()
 }
 

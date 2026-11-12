@@ -1,5 +1,5 @@
 import { atom, memberOf, read, update } from 'claude-code'
-import type { Register, RenderChildren } from 'claude-code'
+import type { Engine, Register, RenderChildren } from 'claude-code'
 
 import type { Prefs } from '../types'
 import { chunk, coreOf, findWord, highlight, parseVoices, wordSpan } from './text'
@@ -63,6 +63,23 @@ echo "$bin"`,
 
 // One sentence to say, and the reply block it came from.
 type Line = { text: string; block: string }
+
+// Sessions share one speaker: a file names the session the person touched last
+// (typed in, sent a prompt, pressed a button), and only that one talks. ponytail:
+// switching to a session without touching it keeps the old owner speaking.
+const seat = { file: '', id: '' }
+
+async function claim($: Engine) {
+  if (!seat.id) return
+  const owner = await $.fs.read(seat.file).catch(() => '')
+  if (owner !== seat.id) await $.fs.write(seat.file, seat.id).catch(() => {})
+}
+
+// No owner yet, or no way to tell, counts as ours.
+async function isOwner($: Engine) {
+  const owner = await $.fs.read(seat.file).catch(() => '')
+  return owner === '' || owner === seat.id
+}
 
 // How a reply block is matched to its message: its first characters.
 const headOf = (markdown: string) => markdown.trim().slice(0, 40)
@@ -135,6 +152,8 @@ export const register: Register = (on, options) => {
       description: 'Read replies aloud: voice, speed and highlight, or on | off | stop | again | demo',
       argumentHint: '[on|off|stop|again|demo]',
     })
+    seat.id = await $.session.id()
+    seat.file = `${(await $.env.get('HOME')) ?? ''}/Library/Caches/read-aloud/owner`
     const saved = (await $.store.get('prefs')) as Partial<Prefs> | undefined
     const style = saved?.style && saved.style in MARKS ? saved.style : 'color'
     prefs = { voice: String(saved?.voice ?? ''), wpm: Number(saved?.wpm ?? 0), style }
@@ -150,6 +169,11 @@ export const register: Register = (on, options) => {
           const line = queue.shift()
           if (line === undefined) {
             await new Promise<void>(resolve => (wake = resolve))
+            continue
+          }
+          if (!(await isOwner($))) {
+            queue = [] // another session has the floor: this reply is not read
+            await update($, player, p => ({ ...p, isSpeaking: false, caption: null }))
             continue
           }
           const gen = generation
@@ -184,6 +208,11 @@ export const register: Register = (on, options) => {
             let said = 0 // how far the caption has got in this sentence
             for (let r = await child.next(); !r.done; r = await child.next()) {
               if (gen !== generation) break
+              if (!(await isOwner($))) {
+                queue = [] // the person moved to another session mid-sentence
+                halt()
+                break
+              }
               if (r.value.stream !== 'stdout') continue
               pending += r.value.text
               const words: string[] = []
@@ -247,8 +276,14 @@ export const register: Register = (on, options) => {
     const arg = e.args.trim()
     if (arg === 'off' || arg === 'stop') stop()
     if (arg === 'on' || arg === 'off') await update($, isOn, () => arg === 'on')
-    if (arg === 'again') replay()
-    if (arg === 'demo') say([{ text: DEMO, block: '' }])
+    if (arg === 'again') {
+      await claim($)
+      replay()
+    }
+    if (arg === 'demo') {
+      await claim($)
+      say([{ text: DEMO, block: '' }])
+    }
 
     return { text: `read-aloud is ${(await read($, isOn)) ? 'on' : 'off'}.` }
   })
@@ -265,7 +300,10 @@ export const register: Register = (on, options) => {
       prefs = { ...prefs, ...patch }
       await update($, prefsAtom, () => prefs)
       await $.store.set('prefs', prefs)
-      if (isHeard) say([{ text: DEMO, block: '' }])
+      if (isHeard) {
+        await claim($)
+        say([{ text: DEMO, block: '' }])
+      }
     }
 
     return (
@@ -287,7 +325,14 @@ export const register: Register = (on, options) => {
           onSelect={v => save({ style: v as Prefs['style'] }, false)}
         />
         <Box flexDirection="row" gap={1}>
-          <Button key="demo" label="Try it" onPress={() => say([{ text: DEMO, block: '' }])} />
+          <Button
+            key="demo"
+            label="Try it"
+            onPress={async () => {
+              await claim($)
+              say([{ text: DEMO, block: '' }])
+            }}
+          />
           <Button key="stop" label="Stop" onPress={() => stop()} />
           <Button
             key="toggle"
@@ -333,7 +378,14 @@ export const register: Register = (on, options) => {
     const toggle = now.isSpeaking ? (
       <Button key="stop" label="Stop" onPress={() => stop()} />
     ) : (
-      <Button key="again" label="Read again" onPress={() => replay()} />
+      <Button
+        key="again"
+        label="Read again"
+        onPress={async () => {
+          await claim($)
+          replay()
+        }}
+      />
     )
     const speed = SPEEDS.find(s => s.value === String(p.wpm))?.label ?? `${p.wpm} wpm`
     const buttons = (
@@ -391,6 +443,7 @@ export const register: Register = (on, options) => {
 
   // A new prompt: the old reply is moot.
   on('prompt.submit', async ($, e, next) => {
+    await claim($)
     halt()
     isStopped = false
     reply = []
@@ -402,15 +455,19 @@ export const register: Register = (on, options) => {
   })
 
   // Typing in the prompt box stops the reading.
-  on('prompt.edit', ($, e, next) => {
+  on('prompt.edit', async ($, e, next) => {
+    await claim($)
     if (queue.length > 0 || current !== undefined) stop()
 
     return next(e)
   })
 
   // So does dictation, or anything else that fills the box (a submit's clear aside).
-  on('prompt.change', ($, e, next) => {
-    if (e.origin.kind !== 'clear' && e.text !== '') stop()
+  on('prompt.change', async ($, e, next) => {
+    if (e.origin.kind !== 'clear' && e.text !== '') {
+      await claim($)
+      stop()
+    }
 
     return next(e)
   })
